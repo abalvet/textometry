@@ -6,3 +6,5 @@ The specificity analysis is inspired by P. Lafon's proposal, and thus relies on 
 Feel free to use this applet to get a feeling of the specificity analysis, then move on to TXM and Hyperbase for more robust results.
 
 As said before, tokenization rules are extremely simple, developers are advised to modify these to suit their specific needs.
+
+**Caveat**: this app is a very simple textometry/lexicometry tool, which has been put together (on a deadline) with much help from LLM coders. Many features are pretty much experimental. 
