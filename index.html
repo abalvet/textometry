@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Textometry Analysis Tool</title>
+  <!-- Plotly for graphs -->
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1, h2, h3 {
+      text-align: center;
+    }
+    /* Container for side-by-side panels */
+    .container {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      margin-bottom: 30px;
+    }
+    .panel {
+      flex: 0 0 48%;
+      padding: 10px;
+      border: 1px solid #ccc;
+      margin-bottom: 20px;
+    }
+    /* Global controls (centered) */
+    .controls {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    input, button, select {
+      margin: 10px 5px;
+      padding: 8px 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f4f4f4;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Textometry Analysis Tool</h1>
+  
+  <!-- File loading and analysis button -->
+  <div class="controls">
+    <input type="file" id="fileA" accept=".txt"> Corpus A
+    <input type="file" id="fileB" accept=".txt"> Corpus B
+    <button id="analyze">Analyze</button>
+  </div>
+  
+  <!-- Two panels: one for each corpus -->
+  <div class="container">
+    <!-- Panel for Corpus A -->
+    <div class="panel" id="panelA">
+      <h2>Corpus A</h2>
+      <p><b>Kincaid-Flesch Readability Index:</b> <span id="readabilityA">-</span></p>
+      <p><b>Type-Token Ratio:</b> <span id="ttrA">-</span></p>
+      <p><b>Guiraud's Index:</b> <span id="guiraudA">-</span></p>
+      <h3>Vocabulary Growth</h3>
+      <div id="vocabGrowthA" style="height:300px;"></div>
+      <h3>N-Grams (Top 10)</h3>
+      <table id="ngramTableA">
+        <thead>
+          <tr>
+            <th>N-Gram</th>
+            <th>Frequency</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <button id="downloadNgramsA">Download Corpus A N-Grams</button>
+    </div>
+    
+    <!-- Panel for Corpus B -->
+    <div class="panel" id="panelB">
+      <h2>Corpus B</h2>
+      <p><b>Kincaid-Flesch Readability Index:</b> <span id="readabilityB">-</span></p>
+      <p><b>Type-Token Ratio:</b> <span id="ttrB">-</span></p>
+      <p><b>Guiraud's Index:</b> <span id="guiraudB">-</span></p>
+      <h3>Vocabulary Growth</h3>
+      <div id="vocabGrowthB" style="height:300px;"></div>
+      <h3>N-Grams (Top 10)</h3>
+      <table id="ngramTableB">
+        <thead>
+          <tr>
+            <th>N-Gram</th>
+            <th>Frequency</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <button id="downloadNgramsB">Download Corpus B N-Grams</button>
+    </div>
+  </div>
+  
+  <!-- Global n-gram controls -->
+  <div class="controls">
+    <h3>Generate N-Grams for Both Corpus</h3>
+    <select id="ngramSize">
+      <option value="1">Unigrams</option>
+      <option value="2">Bigrams</option>
+      <option value="3">Trigrams</option>
+      <option value="4">4-grams</option>
+      <option value="5">5-grams</option>
+    </select>
+    <button id="generateNgrams">Generate N-Grams</button>
+  </div>
+  
+  <!-- Overall token analysis -->
+  <h3>Overall Token Analysis (Top 10)</h3>
+  <table id="resultTable">
+    <thead>
+      <tr>
+        <th onclick="sortTable(0)">Token</th>
+        <th onclick="sortTable(1)">Freq. Corpus A</th>
+        <th onclick="sortTable(2)">Freq. Corpus B</th>
+        <th onclick="sortTable(3)">Specificity A</th>
+        <th onclick="sortTable(4)">Specificity B</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div class="controls">
+    <button id="downloadFull">Download Full Token Results</button>
+  </div>
+  
+  <!-- Similarity metrics -->
+  <h3>Corpus Similarity Metrics</h3>
+  <div id="similarityMetrics" class="controls"></div>
+  
+  <script>
+    /****************** GLOBAL VARIABLES ******************/
+    let corpusA = '', corpusB = '', fullResults = [];
+    let ngramResultsA = {}, ngramResultsB = {};
+
+    /****************** UTILITY FUNCTIONS ******************/
+    // Basic tokenization (returns an array of tokens)
+    /*function tokenize(text) {
+      return text.toLowerCase().match(/\b\w+\b/g) || [];
+    }*/
+    function tokenize(text) {
+      // No replacement of § is done here.
+      return text.match(/[\p{L}\p{N}§]+|[^\s\p{L}\p{N}§]/gu) || [];
+    }
+
+    // Count token frequencies from text
+    function tokenizeAndCount(text) {
+      const tokens = tokenize(text);
+      const freq = {};
+      tokens.forEach(token => {
+        freq[token] = (freq[token] || 0) + 1;
+      });
+      return freq;
+    }
+
+    // Sum all values in an object
+    function sumValues(obj) {
+      return Object.values(obj).reduce((sum, val) => sum + val, 0);
+    }
+
+    // A simplified hypergeometric-inspired specificity calculation
+    function hypergeometric(fA, fB, totalA, totalB) {
+      const N = totalA + totalB;
+      const expectedA = (fA + fB) * (totalA / N);
+      return (fA - expectedA) / Math.sqrt(expectedA);
+    }
+
+    // Estimate syllable count (simplified)
+    function countSyllables(word) {
+      word = word.toLowerCase();
+      if (word.length <= 3) return 1;
+      word = word.replace(/(?:[^laeiouyéèçàùâêŷûîôäëÿüïö]es|ed|[^laeiouyéèçàùâêŷûîôäëÿüïö]e)$/, '');
+      word = word.replace(/^y/, '');
+      const syllableMatches = word.match(/[laeiouyéèçàùâêŷûîôäëÿüïö]{1,2}/g);
+      return syllableMatches ? syllableMatches.length : 1;
+    }
+
+    // Calculate and display basic stats and readability (Flesch-Kincaid Grade Level)
+    function calculateStatsWithText(text, freq, totalTokens, corpus) {
+      const totalTypes = Object.keys(freq).length;
+      const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+      const sentenceCount = sentences.length || 1;
+      const words = tokenize(text);
+      let syllableCount = 0;
+      words.forEach(word => {
+        syllableCount += countSyllables(word);
+      });
+      const fkGrade = 0.39 * (totalTokens / sentenceCount) + 11.8 * (syllableCount / totalTokens) - 15.59;//as per the K-F definition
+      document.getElementById(`readability${corpus}`).textContent = fkGrade.toFixed(2);
+      document.getElementById(`ttr${corpus}`).textContent = (totalTypes / totalTokens).toFixed(2);
+      document.getElementById(`guiraud${corpus}`).textContent = (totalTypes / Math.sqrt(totalTokens)).toFixed(2);
+    }
+
+    // Compute vocabulary growth data (for Plotly)
+    function computeVocabGrowthData(tokens) {
+      const x = [];
+      const y = [];
+      const uniqueTokens = new Set();
+      tokens.forEach((token, index) => {
+        uniqueTokens.add(token);
+        if ((index + 1) % 10 === 0 || index === tokens.length - 1) {
+          x.push(index + 1);
+          y.push(uniqueTokens.size);
+        }
+      });
+      return { x, y };
+    }
+
+    // Render a vocabulary growth graph into a given element
+    function generateVocabGrowthGraph(text, elementId) {
+      const tokens = tokenize(text);
+      const data = computeVocabGrowthData(tokens);
+      const trace = {
+        x: data.x,
+        y: data.y,
+        mode: 'lines+markers',
+        name: 'Unique Tokens'
+      };
+      const layout = {
+        title: 'Vocabulary Growth',
+        xaxis: { title: 'Token Position' },
+        yaxis: { title: 'Cumulative Unique Tokens' }
+      };
+      Plotly.newPlot(elementId, [trace], layout);
+    }
+
+    // Generate n-gram frequencies from text (n = n-gram size)
+    function generateNgramFrequencies(text, n) {
+      const tokens = tokenize(text);
+      const ngramFreq = {};
+      for (let i = 0; i <= tokens.length - n; i++) {
+        const ngram = tokens.slice(i, i + n).join(' ');
+        ngramFreq[ngram] = (ngramFreq[ngram] || 0) + 1;
+      }
+      return ngramFreq;
+    }
+
+    // Display an n-gram table in the given element (top 10)
+    function displayNgramTable(ngramFreq, elementId) {
+      const tbody = document.querySelector(`#${elementId} tbody`);
+      tbody.innerHTML = '';
+      const ngramEntries = Object.entries(ngramFreq);
+      ngramEntries.sort((a, b) => b[1] - a[1]);
+      const top10 = ngramEntries.slice(0, 10);
+      top10.forEach(entry => {
+        const [ngram, freq] = entry;
+        const tr = `<tr>
+                      <td>${ngram}</td>
+                      <td>${freq}</td>
+                    </tr>`;
+        tbody.insertAdjacentHTML('beforeend', tr);
+      });
+    }
+
+    // Convert n-gram frequency data to CSV format
+    function ngramFreqToCSV(ngramFreq) {
+      const lines = ["N-Gram,Frequency"];
+      Object.entries(ngramFreq)
+        .sort((a, b) => b[1] - a[1])
+        .forEach(entry => {
+          const [ngram, freq] = entry;
+          lines.push(`"${ngram}",${freq}`);
+        });
+      return lines.join("\n");
+    }
+
+    // Download CSV helper function
+    function downloadCSV(content, filename) {
+      const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", filename);
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    // Display overall token table (top 10)
+    function displayTable(data) {
+      const tableBody = document.querySelector('#resultTable tbody');
+      tableBody.innerHTML = '';
+      data.forEach(row => {
+        const tr = `<tr>
+                      <td>${row.token}</td>
+                      <td>${row.fA}</td>
+                      <td>${row.fB}</td>
+                      <td>${row.specificityA.toFixed(2)}</td>
+                      <td>${row.specificityB.toFixed(2)}</td>
+                    </tr>`;
+        tableBody.insertAdjacentHTML('beforeend', tr);
+      });
+    }
+
+    // Sort overall token table when clicking a header
+    function sortTable(column) {
+      const table = document.getElementById('resultTable');
+      const tbody = table.querySelector('tbody');
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      rows.sort((a, b) => {
+        const aText = a.querySelectorAll('td')[column].textContent;
+        const bText = b.querySelectorAll('td')[column].textContent;
+        return isNaN(aText)
+          ? aText.localeCompare(bText)
+          : parseFloat(bText) - parseFloat(aText);
+      });
+      tbody.innerHTML = '';
+      rows.forEach(row => tbody.appendChild(row));
+    }
+
+    // Compute similarity metrics (Jaccard, Dice, Cosine)
+    function computeSimilarityMetrics(freqA, freqB) {
+      const setA = new Set(Object.keys(freqA));
+      const setB = new Set(Object.keys(freqB));
+      const intersection = new Set([...setA].filter(x => setB.has(x)));
+      const union = new Set([...setA, ...setB]);
+      const jaccard = union.size > 0 ? intersection.size / union.size : 0;
+      const dice = (setA.size + setB.size) > 0 ? (2 * intersection.size) / (setA.size + setB.size) : 0;
+      let dotProduct = 0, normA = 0, normB = 0;
+      union.forEach(token => {
+        const a = freqA[token] || 0;
+        const b = freqB[token] || 0;
+        dotProduct += a * b;
+        normA += a * a;
+        normB += b * b;
+      });
+      const cosine = (normA && normB) ? dotProduct / (Math.sqrt(normA) * Math.sqrt(normB)) : 0;
+      return { jaccard, dice, cosine };
+    }
+
+    // Display similarity metrics in the designated div
+    function displaySimilarityMetrics(metrics) {
+      const div = document.getElementById('similarityMetrics');
+      div.innerHTML = `<p><b>Jaccard Index:</b> ${metrics.jaccard.toFixed(4)}</p>
+                       <p><b>Dice Coefficient:</b> ${metrics.dice.toFixed(4)}</p>
+                       <p><b>Cosine Similarity:</b> ${metrics.cosine.toFixed(4)}</p>
+                       <p><!-- Other measures, such as KL divergence, could be added here. --></p>`;
+    }
+
+    /****************** FILE LOADING ******************/
+    document.getElementById('fileA').addEventListener('change', e => loadFile(e, 'A'));
+    document.getElementById('fileB').addEventListener('change', e => loadFile(e, 'B'));
+
+    function loadFile(event, corpus) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (corpus === 'A') {
+          corpusA = reader.result;
+        } else {
+          corpusB = reader.result;
+        }
+      };
+      reader.readAsText(event.target.files[0], 'UTF-8');
+    }
+
+    /****************** ANALYSIS ACTIONS ******************/
+    // When "Analyze" is clicked
+    document.getElementById('analyze').addEventListener('click', () => {
+      if (!corpusA || !corpusB) {
+        alert("Please load both files.");
+        return;
+      }
+      // Token analysis
+      const freqA = tokenizeAndCount(corpusA);
+      const freqB = tokenizeAndCount(corpusB);
+      const totalA = sumValues(freqA);
+      const totalB = sumValues(freqB);
+      
+      // Calculate and display stats for each corpus
+      calculateStatsWithText(corpusA, freqA, totalA, 'A');
+      calculateStatsWithText(corpusB, freqB, totalB, 'B');
+      
+      // Generate vocabulary growth graphs
+      generateVocabGrowthGraph(corpusA, 'vocabGrowthA');
+      generateVocabGrowthGraph(corpusB, 'vocabGrowthB');
+      
+      // Overall token analysis: merge tokens from both corpus and calculate specificity
+      const tokens = Array.from(new Set([...Object.keys(freqA), ...Object.keys(freqB)]));
+      fullResults = tokens.map(token => {
+        const fA = freqA[token] || 0;
+        const fB = freqB[token] || 0;
+        const specificityA = hypergeometric(fA, fB, totalA, totalB);
+        return {
+          token,
+          fA,
+          fB,
+          specificityA,
+          specificityB: -specificityA
+        };
+      }).sort((a, b) => Math.abs(b.specificityA) - Math.abs(a.specificityA));
+      displayTable(fullResults.slice(0, 10));
+      
+      // Compute and display corpus similarity metrics
+      const simMetrics = computeSimilarityMetrics(freqA, freqB);
+      displaySimilarityMetrics(simMetrics);
+    });
+
+    // Global "Generate N-Grams" action (applies to both corpus)
+    document.getElementById('generateNgrams').addEventListener('click', () => {
+      if (!corpusA || !corpusB) {
+        alert("Please load both files.");
+        return;
+      }
+      const n = parseInt(document.getElementById('ngramSize').value);
+      ngramResultsA = generateNgramFrequencies(corpusA, n);
+      ngramResultsB = generateNgramFrequencies(corpusB, n);
+      displayNgramTable(ngramResultsA, "ngramTableA");
+      displayNgramTable(ngramResultsB, "ngramTableB");
+    });
+
+    // Download full token results as TSV
+    document.getElementById('downloadFull').addEventListener('click', () => {
+      if (fullResults.length === 0) {
+        alert('Perform analysis first');
+        return;
+      }
+      const csvContent = [
+        "Token\tFreq Corpus A\tFreq Corpus B\tSpecificity A\tSpecificity B",
+        ...fullResults.map(row =>
+          `${row.token}\t${row.fA}\t${row.fB}\t${row.specificityA.toFixed(2)}\t${row.specificityB.toFixed(2)}`
+        )
+      ].join('\n');
+      downloadCSV(csvContent, "textometry_results.tsv");
+    });
+
+    // Download n-grams for Corpus A as tSV
+    document.getElementById('downloadNgramsA').addEventListener('click', () => {
+      if (Object.keys(ngramResultsA).length === 0) {
+        alert("Generate n-grams first.");
+        return;
+      }
+      const csv = ngramFreqToCSV(ngramResultsA);
+      downloadCSV(csv, "corpusA_ngrams.tsv");
+    });
+
+    // Download n-grams for Corpus B as tSV
+    document.getElementById('downloadNgramsB').addEventListener('click', () => {
+      if (Object.keys(ngramResultsB).length === 0) {
+        alert("Generate n-grams first.");
+        return;
+      }
+      const csv = ngramFreqToCSV(ngramResultsB);
+      downloadCSV(csv, "corpusB_ngrams.csv");
+    });
+  </script>
+</body>
+</html>
+
